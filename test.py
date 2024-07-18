@@ -11,7 +11,13 @@ from peft import get_peft_config, get_peft_model, LoraConfig, TaskType
 
 os.environ['HF_TOKEN'] = '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'
 
-peft_config = LoraConfig()
+lora_config = LoraConfig(
+    r=16,
+    lora_alpha=32,
+    lora_dropout=0.05,
+    bias="none",
+    task_type="CAUSAL_LM",
+)
 
 # Load the Tiny Stories dataset
 dataset = load_dataset("roneneldan/TinyStories")
@@ -20,8 +26,7 @@ dataset = load_dataset("roneneldan/TinyStories")
 model_name = "mistralai/Mistral-7B-v0.3"
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 tokenizer.pad_token = tokenizer.eos_token
-model_ = AutoModelForCausalLMWithValueHead.from_pretrained(model_name)
-model = model_
+model = AutoModelForCausalLMWithValueHead.from_pretrained(model_name, peft_config=lora_config)
 
 # Custom dataset class
 class TensorDataset(Dataset):
@@ -58,7 +63,7 @@ ppo_trainer = PPOTrainer(
 
 generation_kwargs = {
     "min_length": -1,
-    "max_length": 200, 
+    "max_length": 400, 
     "top_k": 0.0,
     "top_p": 1.0,
     "do_sample": True,
@@ -72,7 +77,6 @@ def compute_rewards(model, input_ids, queries):
     with torch.no_grad():
         inputs = torch.cat([queries.unsqueeze(0), input_ids],dim=1)
         outputs = model(inputs, labels=inputs)
-        print(inputs.shape, input_ids.shape)
         logits = outputs[0][0,-1*input_ids.shape[1]-1:-1,:]
         rewards = logits[range(input_ids.shape[1]),input_ids[0]]
         loss = torch.mean(rewards)
@@ -85,7 +89,7 @@ for queries in dataset:
     responses = ppo_trainer.generate(queries, **generation_kwargs)
     rewards = compute_rewards(model, responses, queries)
     # avg_rewards = rewards.mean().unsqueeze(0)
-    pdb.set_trace()
+    # pdb.set_trace()
     ppo_trainer.step([queries], [responses[0]], [rewards])
 
 
