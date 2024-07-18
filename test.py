@@ -4,10 +4,12 @@ from datasets import load_dataset
 from torch.utils.data import Dataset, DataLoader
 from trl import PPOTrainer, PPOConfig
 import pdb
+import numpy as np
 import os
 from tqdm import tqdm
 from trl.models import AutoModelForCausalLMWithValueHead
 from peft import get_peft_config, get_peft_model, LoraConfig, TaskType
+from torch.nn.utils.rnn import pad_sequence 
 
 os.environ['HF_TOKEN'] = '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'
 
@@ -18,6 +20,9 @@ lora_config = LoraConfig(
     bias="none",
     task_type="CAUSAL_LM",
 )
+
+batch_size = 4 
+mini_batch_size = 4
 
 # Load the Tiny Stories dataset
 dataset = load_dataset("roneneldan/TinyStories")
@@ -49,8 +54,8 @@ dataset = TensorDataset(tokenized_data)
 ppo_config = PPOConfig(
     model_name=model_name,
     learning_rate=1.41e-5,
-    batch_size=1,
-    mini_batch_size=1,
+    batch_size=batch_size,
+    mini_batch_size=mini_batch_size,
 )
 
 # Initialize the PPO trainer
@@ -73,24 +78,32 @@ generation_kwargs = {
 
 # Custom reward function using model's own likelihood
 def compute_rewards(model, input_ids, queries):
-    # pdb.set_trace()
+    inputs = [torch.cat([query, input_id]) for query,input_id in zip(queries, input_ids)] 
+    padded_inputs = pad_sequence(inputs, batch_first=True, padding_value=tokenizer.eos_token_id)
     with torch.no_grad():
-        inputs = torch.cat([queries.unsqueeze(0), input_ids],dim=1)
-        outputs = model(inputs, labels=inputs)
-        logits = outputs[0][0,-1*input_ids.shape[1]-1:-1,:]
-        rewards = logits[range(input_ids.shape[1]),input_ids[0]]
-        loss = torch.mean(rewards)
-    return loss
+        # inputs = torch.cat([queries.unsqueeze(0), input_ids],dim=1)
+        outputs = model(padded_inputs, labels=padded_inputs)
+        logits = [outputs[0][0, len(query)-1:len(query)-1+len(input_id), :] for query,input_id in zip(queries, input_ids)]
+        # logits = outputs[0][0, query_lengths-1:-1, :]
+        # rewards = logits[range(input_ids.shape[1]),input_ids[0]]
+        rewards = [torch.mean(logits[i][range(len(input_id)), input_id]) for i, input_id in enumerate(input_ids)]
+        # pdb.set_trace()
+        # loss = torch.mean(rewards,dim=1)
+    return rewards
 
 
-
-for queries in dataset:
-    queries = queries.to('cuda')
+n_updates = 1000
+for n in range(n_updates):
+    query_inds = np.random.randint(0, len(dataset), batch_size)
+    queries = [dataset[i].to('cuda') for i in query_inds]
+    # padded_queries = pad_sequence(queries, batch_first=True, padding_value=tokenizer.eos_token_id)
+    # queries = padded_queries.to('cuda')
     responses = ppo_trainer.generate(queries, **generation_kwargs)
     rewards = compute_rewards(model, responses, queries)
     # avg_rewards = rewards.mean().unsqueeze(0)
     # pdb.set_trace()
-    ppo_trainer.step([queries], [responses[0]], [rewards])
+    pdb.set_trace()
+    ppo_trainer.step(queries, responses, rewards)
 
 
 
