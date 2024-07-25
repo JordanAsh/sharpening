@@ -77,9 +77,12 @@ class TensorDataset(Dataset):
 
 # Preprocess the dataset
 tokenized_data = []
-for i, example in tqdm(enumerate(dataset['train'])):
-    tokenized_data.append(tokenizer.encode(example['text'], return_tensors='pt').squeeze())
-    if args.debug and i > 1000: break
+total_examples = len(dataset['train']) if not args.debug else min(1000, len(dataset['train']))
+with tqdm(total=total_examples, desc="Tokenizing") as pbar:
+    for i, example in enumerate(dataset['train']):
+        tokenized_data.append(tokenizer.encode(example['text'], return_tensors='pt').squeeze())
+        if args.debug and i > 1000: break
+        pbar.update()
 dataset = TensorDataset(tokenized_data)
 
 # Custom collate function to pad sequences
